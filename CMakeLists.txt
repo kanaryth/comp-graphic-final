@@ -12,6 +12,7 @@ find_package(glm CONFIG REQUIRED)
 
 add_executable(CarShowroom
     src/main.cpp
+    src/shader.cpp
 )
 
 target_link_libraries(CarShowroom PRIVATE
