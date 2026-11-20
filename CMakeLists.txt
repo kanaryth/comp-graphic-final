@@ -16,6 +16,7 @@ add_executable(CarShowroom
     src/shader.cpp
     src/Mesh.cpp
     src/Model.cpp
+    src/TextureLoader.cpp
 )
 
 target_link_libraries(CarShowroom PRIVATE
