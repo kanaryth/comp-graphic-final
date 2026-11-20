@@ -64,6 +64,20 @@ void Mesh::SetupMesh()
     );
     glEnableVertexAttribArray(2);
 
+    glVertexAttribPointer(
+        3, 3, GL_FLOAT, GL_FALSE,
+        sizeof(Vertex),
+        (void*)offsetof(Vertex, Tangent)
+    );
+    glEnableVertexAttribArray(3);
+
+    glVertexAttribPointer(
+        4, 3, GL_FLOAT, GL_FALSE,
+        sizeof(Vertex),
+        (void*)offsetof(Vertex, Bitangent)
+    );
+    glEnableVertexAttribArray(4);
+
     glBindVertexArray(0);
 }
 
@@ -76,6 +90,9 @@ void Mesh::Draw(const Shader& shader, const glm::mat4& transform)
     unsigned int normalNr = 1;
     unsigned int heightNr = 1;
 
+    bool hasDiffuseTexture = false;
+    bool hasNormalTexture = false;
+
     for (unsigned int i = 0; i < textures.size(); i++)
     {
         glActiveTexture(GL_TEXTURE0 + i);
@@ -84,17 +101,30 @@ void Mesh::Draw(const Shader& shader, const glm::mat4& transform)
         std::string name = textures[i].type;
 
         if (name == "texture_diffuse")
+        {
             number = std::to_string(diffuseNr++);
+            hasDiffuseTexture = true;
+        }
         else if (name == "texture_specular")
+        {
             number = std::to_string(specularNr++);
+        }
         else if (name == "texture_normal")
+        {
             number = std::to_string(normalNr++);
+            hasNormalTexture = true;
+        }
         else if (name == "texture_height")
+        {
             number = std::to_string(heightNr++);
+        }
 
         shader.SetInt(name + number, i);
         glBindTexture(GL_TEXTURE_2D, textures[i].id);
     }
+
+    shader.SetInt("hasDiffuseTexture", hasDiffuseTexture ? 1 : 0);
+    shader.SetInt("hasNormalTexture", hasNormalTexture ? 1 : 0);
 
     glBindVertexArray(VAO);
 

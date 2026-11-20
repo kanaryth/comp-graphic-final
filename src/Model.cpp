@@ -2,12 +2,19 @@
 #define GL_SILENCE_DEPRECATION
 
 #include "Model.h"
+#include "TextureLoader.h"
 
 #include <iostream>
+#include <filesystem>
+
+#include <glm/glm.hpp>
 
 #include <assimp/Importer.hpp>
 #include <assimp/scene.h>
 #include <assimp/postprocess.h>
+#include <assimp/material.h>
+
+namespace fs = std::filesystem;
 
 Model::Model(const std::string& path)
 {
@@ -24,10 +31,17 @@ void Model::LoadModel(const std::string& path)
 {
     Assimp::Importer importer;
 
+    fs::path modelPath(path);
+    directory = modelPath.parent_path().string();
+
+    if (directory.empty())
+        directory = ".";
+
     const aiScene* scene = importer.ReadFile(
         path,
         aiProcess_Triangulate |
         aiProcess_GenSmoothNormals |
+        aiProcess_CalcTangentSpace |
         aiProcess_JoinIdenticalVertices |
         aiProcess_ImproveCacheLocality
     );
@@ -41,6 +55,7 @@ void Model::LoadModel(const std::string& path)
     }
 
     meshes.clear();
+    loadedTextures.clear();
 
     rootNode = ProcessNode(scene->mRootNode, scene);
 
@@ -48,6 +63,7 @@ void Model::LoadModel(const std::string& path)
 
     std::cout << "Model loaded successfully: " << path << '\n';
     std::cout << "Meshes: " << meshes.size() << '\n';
+    std::cout << "Textures loaded: " << loadedTextures.size() << '\n';
 }
 
 ModelNode Model::ProcessNode(
@@ -99,11 +115,11 @@ unsigned int Model::ProcessMesh(
 
         if (mesh->HasNormals())
         {
-            vertex.Normal = glm::vec3(
+            vertex.Normal = glm::normalize(glm::vec3(
                 mesh->mNormals[i].x,
                 mesh->mNormals[i].y,
                 mesh->mNormals[i].z
-            );
+            ));
         }
         else
         {
@@ -122,6 +138,34 @@ unsigned int Model::ProcessMesh(
             vertex.TexCoords = glm::vec2(0.0f, 0.0f);
         }
 
+        if (mesh->HasTangentsAndBitangents())
+        {
+            vertex.Tangent = glm::normalize(glm::vec3(
+                mesh->mTangents[i].x,
+                mesh->mTangents[i].y,
+                mesh->mTangents[i].z
+            ));
+
+            vertex.Bitangent = glm::normalize(glm::vec3(
+                mesh->mBitangents[i].x,
+                mesh->mBitangents[i].y,
+                mesh->mBitangents[i].z
+            ));
+        }
+        else
+        {
+            glm::vec3 normal = vertex.Normal;
+
+            glm::vec3 up = std::abs(normal.y) < 0.999f
+                ? glm::vec3(0.0f, 1.0f, 0.0f)
+                : glm::vec3(1.0f, 0.0f, 0.0f);
+
+            vertex.Tangent = glm::normalize(glm::cross(up, normal));
+            vertex.Bitangent = glm::normalize(
+                glm::cross(normal, vertex.Tangent)
+            );
+        }
+
         vertices.push_back(vertex);
     }
 
@@ -132,6 +176,109 @@ unsigned int Model::ProcessMesh(
         for (unsigned int j = 0; j < face.mNumIndices; j++)
         {
             indices.push_back(face.mIndices[j]);
+        }
+    }
+
+    if (mesh->mMaterialIndex < scene->mNumMaterials)
+    {
+        aiMaterial* material = scene->mMaterials[mesh->mMaterialIndex];
+
+        auto loadTextures = [&](aiTextureType type, const std::string& typeName)
+        {
+            for (unsigned int i = 0; i < material->GetTextureCount(type); i++)
+            {
+                aiString texturePath;
+                material->GetTexture(type, i, &texturePath);
+
+                std::string relativePath = texturePath.C_Str();
+
+                if (relativePath.empty() || relativePath[0] == '*')
+                    continue;
+
+                fs::path originalPath(relativePath);
+                fs::path filename = originalPath.filename();
+
+                std::vector<fs::path> candidates = {
+                    fs::path(directory) / originalPath,
+                    fs::path(directory) / filename,
+                    fs::path(directory) / "textures" / filename
+                };
+
+                fs::path resolvedPath;
+                bool found = false;
+
+                for (const fs::path& candidate : candidates)
+                {
+                    std::error_code error;
+
+                    if (fs::exists(candidate, error) &&
+                        !error &&
+                        fs::is_regular_file(candidate, error) &&
+                        !error)
+                    {
+                        resolvedPath = candidate;
+                        found = true;
+                        break;
+                    }
+                }
+
+                if (!found)
+                {
+                    std::cerr << "Texture not found: "
+                              << relativePath << '\n';
+                    continue;
+                }
+
+                std::error_code error;
+
+                fs::path canonicalPath =
+                    fs::weakly_canonical(resolvedPath, error);
+
+                std::string fullPath = error
+                    ? resolvedPath.string()
+                    : canonicalPath.string();
+
+                bool alreadyLoaded = false;
+
+                for (const Texture& texture : loadedTextures)
+                {
+                    if (texture.path == fullPath &&
+                        texture.type == typeName)
+                    {
+                        textures.push_back(texture);
+                        alreadyLoaded = true;
+                        break;
+                    }
+                }
+
+                if (alreadyLoaded)
+                    continue;
+
+                unsigned int textureID = LoadTexture(fullPath);
+
+                if (textureID == 0)
+                    continue;
+
+                Texture texture;
+                texture.id = textureID;
+                texture.type = typeName;
+                texture.path = fullPath;
+
+                textures.push_back(texture);
+                loadedTextures.push_back(texture);
+
+                std::cout << "Loaded texture: "
+                          << fullPath << '\n';
+            }
+        };
+
+        loadTextures(aiTextureType_DIFFUSE, "texture_diffuse");
+
+        loadTextures(aiTextureType_NORMALS, "texture_normal");
+
+        if (material->GetTextureCount(aiTextureType_NORMALS) == 0)
+        {
+            loadTextures(aiTextureType_HEIGHT, "texture_normal");
         }
     }
 
